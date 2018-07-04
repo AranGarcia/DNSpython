@@ -56,7 +56,9 @@ class DNSserver:
         self.sock.sendto(bytes(query), (self.forward_servers[0], 53))
 
         data, address = self.sock.recvfrom(1024)
-        # print(dns.DNSquery(data))
+        response = dns.DNSmessage(data)
+        print("\nResponse received from", address)
+        print(response)
 
     def __name_exists(self, questions):
 

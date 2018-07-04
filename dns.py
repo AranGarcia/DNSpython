@@ -159,7 +159,6 @@ class DNSmessage:
         self.answer_count = bytes_to_int(data[6:8])
         self.ar_count = bytes_to_int(data[8:10])
         self.ai_count = bytes_to_int(data[10:12])
-
         index = 12
 
         # Question
@@ -172,8 +171,8 @@ class DNSmessage:
         # Answers
         self.answers = []
         for i in range(self.answer_count):
-            answer, offset = DNSmessage.__parse_resource(data, index)
-            index += offset
+            answer, last = DNSmessage.__parse_resource(data, index)
+            index = last
             self.answers.append(answer)
 
         # Authority records
@@ -233,18 +232,8 @@ class DNSmessage:
         and offset is the amount of bytes 
         """
 
-        index = start
-        labels = []
-        offset = data[index]
-
-        # Question name
-        while offset:
-            labels.append(data[index + 1:index + 1 + offset].decode())
-            index += offset + 1
-            offset = data[index]
-
-        query_name = '.'.join(labels)
-        index += 1
+        # Query name
+        query_name, index = DNSmessage.__parse_labels(data, start)
 
         # Query type
         query_type = bytes_to_int(data[index: index + 2])
@@ -257,19 +246,15 @@ class DNSmessage:
 
     @staticmethod
     def __parse_resource(data, start):
+        if data[start] == 192:
+            chunk = bytes_to_int(data[start:start + 2])
+            offset = chunk & 0x3FFF
+            ans_name, index = DNSmessage.__parse_labels(data, offset)
 
-        index = start
-        labels = []
-        offset = data[index]
+            index = start + 2
+        else:
+            ans_name, index = DNSmessage.__parse_labels(data, start)
 
-        # Answer name
-        while offset:
-            labels.append(data[index + 1:index + 1 + offset].decode())
-            index += offset + 1
-            offset = data[index]
-
-        ans_name = '.'.join(labels)
-        index += 1
         # Answer type
         ans_type = bytes_to_int(data[index: index + 2])
         index += 2
@@ -304,10 +289,14 @@ class DNSmessage:
             rdlength = bytes_to_int(data[index: index + 2])
             index += 2
 
-            rdata = data[index: index + rdlength]
-            index += rdlength
+            # rdata = data[index: index + rdlength]
+            subnets = []
+            for i in range(index, index + rdlength):
+                subnets.append(str(data[i]))
+            rdata = '.'.join(subnets)
 
-            return (RRecord(ans_name, ans_type, ans_class, ttl, data), index)
+            index += rdlength
+            return (RRecord(ans_name, ans_type, ans_class, ttl, rdata), index)
 
     @staticmethod
     def __parse_headers(data):
@@ -343,9 +332,31 @@ class DNSmessage:
 
         return flags
 
+    @staticmethod
+    def __parse_labels(data, start):
+        index = start
+        labels = []
+        offset = data[index]
+
+        while offset:
+            labels.append(data[index + 1:index + 1 + offset].decode())
+            index += offset + 1
+            offset = data[index]
+
+        name = '.'.join(labels)
+        index += 1
+
+        return name, index
+
     def __str__(self):
         qbuffer = bytearray()
+        abuffer = bytearray()
         adbuffer = bytearray()
+
+        if self.flags["qr"]:
+            message_type = "Response"
+        else:
+            message_type = "Query"
 
         if self.questions:
             qbuffer.extend(b"Queries:")
@@ -353,13 +364,19 @@ class DNSmessage:
             for q in self.questions:
                 qbuffer.extend(b"\n\t\t" + str(q).encode())
 
+        if self.answers:
+            abuffer.extend(b'Answers:')
+
+            for a in self.answers:
+                abuffer.extend(b'\n\t\t' + str(a).encode())
+
         if self.add_records:
             adbuffer.extend(b'Additional Records')
 
             for ad in self.add_records:
                 adbuffer.extend(b"\n\t\t" + str(ad).encode())
 
-        return "DNS Query" + "\n\tTransaction ID: %d (0x%04x)\n\tHeaders:" % (self.id, self.id) + \
+        return "DNS " + message_type + "\n\tTransaction ID: %d (0x%04x)\n\tHeaders:" % (self.id, self.id) + \
             "\n\t\tOp. code: %s(%d)" % (dnscodes.OP_CODE[self.flags["op_code"]], self.flags["op_code"]) + \
             "\n\t\tAuthorative: " + str(self.flags["aa"]) + "\n\t\tTruncated: " + str(self.flags["tc"]) + \
             "\n\t\tRecursion Desired: " + str(self.flags["rd"]) + \
@@ -370,7 +387,8 @@ class DNSmessage:
                 dnscodes.R_CODE[self.flags["r_code"]], self.flags["r_code"]) + \
             "\n\tQuestions:" + str(self.query_count) + "\n\tAnswer RRs:" + str(self.answer_count) + \
             "\n\tAuthority RRs: " + str(self.ar_count) + "\n\tAditional RRs: " + str(self.ai_count) + \
-            "\n\t" + qbuffer.decode() + "\n\t" + adbuffer.decode()
+            "\n\t" + qbuffer.decode() + "\n\t" + abuffer.decode() + \
+            "\n\t" + adbuffer.decode()
 
     def __bytes__(self):
         buffer = bytearray()
