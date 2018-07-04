@@ -35,10 +35,6 @@ class DNSserver:
 
             query = dns.DNSmessage(data)
             print(query)
-            print("Data")
-            print(data)
-            print("QBytes")
-            print(bytes(query))
 
             if self.__name_exists(query.questions):
                 # An answer can be made from local data

@@ -7,8 +7,26 @@ def bytes_to_int(data):
     return int.from_bytes(data, byteorder="big")
 
 
-def int_to_bytes(num):
-    return int.to_bytes(num, 2, byteorder="big")
+def int_to_bytes(num, size=2):
+    return int.to_bytes(num, size, byteorder="big")
+
+
+def encode_name(name):
+    """
+    Encodes a query name into a byte string with data labels
+    """
+    if not name:
+        return b'\x00'
+
+    names = name.split('.')
+    buffer = bytearray()
+
+    for n in names:
+        buffer.append(len(n))
+        buffer.extend(n.encode())
+    buffer.append(0)
+
+    return bytes(buffer)
 
 
 class Question:
@@ -17,24 +35,15 @@ class Question:
         self. qtype = qtype
         self.qclass = qclass
 
-    @staticmethod
-    def __encode_query_name(qname):
-        """
-        Encodes a query name into a byte string with data labels
-        """
-        names = qname.split('.')
-        buffer = bytearray()
-
-        for n in names:
-            buffer.append(len(n))
-            buffer.extend(n.encode())
-        buffer.append(0)
-
-        return bytes(buffer)
-
     def __bytes__(self):
         buffer = bytearray()
-        buffer.extend(Question.__encode_query_name(self.qname))
+
+        # Query name
+        buffer.extend(encode_name(self.qname))
+        # Query type
+        buffer.extend(int_to_bytes(self.qtype))
+        # Query class
+        buffer.extend(int_to_bytes(self.qclass))
 
         return bytes(buffer)
 
@@ -47,31 +56,49 @@ class Question:
 
 
 class Resource:
-    def __init__(self, rname, rtype, rclass, data):
+    def __init__(self, rname, rtype, rclass, rdata):
         self.rname = rname
         self.rtype = rtype
         self.rclass = rclass
-        self.data = data
+        self.rdata = rdata
 
 
 class RRecord(Resource):
-    def __init__(self, rname, rtype, rclass, ttl, data):
-        super(RRecord, self).__init__(rname, rtype, rclass, data)
+    def __init__(self, rname, rtype, rclass, ttl, rdata):
+        super(RRecord, self).__init__(rname, rtype, rclass, rdata)
         self.ttl = ttl
 
     def __str__(self):
-        return "name: %s, type: %s (%d), class: %s, ttl:%d, data: %r" % (
+        return "name: %s, type: %s (%d), class: %s, ttl:%d, rdata: %r" % (
             self.rname, dnscodes.RRType(self.rtype).name, self.rtype,
             dnscodes.RRClass(self.rclass).name, self.ttl,
-            self.data
+            self.rdata
         )
+
+    def __bytes__(self):
+        buffer = bytearray()
+
+        # Name
+        buffer.extend(self.rname)
+        # Type
+        buffer.extend(int_to_bytes(self.rtype))
+        # Class
+        buffer.extend(int_to_bytes(self.rclass))
+        # TTL
+        buffer.extend(int_to_bytes(self.ttl, 4))
+        # RDlength
+        buffer.extend(int_to_bytes(len(self.rdata)))
+        # RData
+        buffer.extend(self.rdata)
+
+        return bytes(buffer)
 
 
 class OPTRecord(Resource):
-    def __init__(self, rname, rtype, rclass, ext, vers, z, data):
+    def __init__(self, rname, rtype, rclass, ext, version, z, data):
         super(OPTRecord, self).__init__(rname, rtype, rclass, data)
         self.ext = ext
-        self.vers = vers
+        self.version = version
         self.z = z
 
     def __str__(self):
@@ -82,8 +109,30 @@ class OPTRecord(Resource):
 
         return "domain: %s, type: %s (%d), UDP payload: %d, RCode ext.:%d, version: %d, z: 0x%04x,data: %r" % (
             domain, dnscodes.RRType(self.rtype).name, self.rtype,
-            self.rclass, self.ext, self.vers, self.z, self.data
+            self.rclass, self.ext, self.version, self.z, self.rdata
         )
+
+    def __bytes__(self):
+        buffer = bytearray()
+
+        # Name
+        buffer.extend(encode_name(self.rname))
+        # Type
+        buffer.extend(int_to_bytes(self.rtype))
+        # Class
+        buffer.extend(int_to_bytes(self.rclass))
+        # Extension RCode
+        buffer.append(self.ext)
+        # Version
+        buffer.append(self.version)
+        # Zero
+        buffer.extend(int_to_bytes(self.z))
+        # RDlength
+        buffer.extend(int_to_bytes(len(self.rdata)))
+        # RData
+        buffer.extend(self.rdata)
+
+        return bytes(buffer)
 
 
 class DNSmessage:
@@ -123,38 +172,6 @@ class DNSmessage:
         # Answers
         self.answers = []
         for i in range(self.answer_count):
-            # labels = []
-            # offset = data[index]
-
-            # # Answer name
-            # while offset:
-            #     labels.append(data[index + 1:index + 1 + offset].decode())
-            #     index += offset + 1
-            #     offset = data[index]
-
-            # ans_name = '.'.join(labels)
-            # index += 1
-
-            # # Answer type
-            # ans_type = bytes_to_int(data[index: index + 2])
-            # index += 2
-
-            # # Answer class
-            # ans_class = bytes_to_int(data[index: index + 2])
-            # index += 2
-
-            # # TTL
-            # ttl = bytes_to_int(data[index: index + 4])
-            # index += 4
-
-            # # RDLength, only for purposes of parsing
-            # rdlength = bytes_to_int(data[index: index + 2])
-            # index += 2
-
-            # self.answers.append(
-            #     Answer(ans_name, ans_type, ans_class, ttl, data[index: index + rdlength]))
-
-            # index += rdlength
             answer, offset = DNSmessage.__parse_resource(data, index)
             index += offset
             self.answers.append(answer)
@@ -168,9 +185,7 @@ class DNSmessage:
         # Additional records
         self.add_records = []
         for i in range(self.ai_count):
-            print(data[index:])
             answer, last = DNSmessage.__parse_resource(data, index)
-
             index = last
             self.add_records.append(answer)
 
@@ -255,7 +270,6 @@ class DNSmessage:
 
         ans_name = '.'.join(labels)
         index += 1
-
         # Answer type
         ans_type = bytes_to_int(data[index: index + 2])
         index += 2
@@ -343,7 +357,7 @@ class DNSmessage:
             adbuffer.extend(b'Additional Records')
 
             for ad in self.add_records:
-                adbuffer.extend(b"\n\t\t" +  str(ad).encode())
+                adbuffer.extend(b"\n\t\t" + str(ad).encode())
 
         return "DNS Query" + "\n\tTransaction ID: %d (0x%04x)\n\tHeaders:" % (self.id, self.id) + \
             "\n\t\tOp. code: %s(%d)" % (dnscodes.OP_CODE[self.flags["op_code"]], self.flags["op_code"]) + \
@@ -373,9 +387,16 @@ class DNSmessage:
         # Additional RRs
         buffer.extend(int_to_bytes(self.ai_count))
 
-        # Query name
+        # Questions
         for q in self.questions:
             buffer.extend(bytes(q))
+
+        # Answers
+        for a in self.answers:
+            buffer.extend(bytes(a))
+
+        for ad in self.add_records:
+            buffer.extend(bytes(ad))
 
         return self.__header_to_bytes() + bytes(buffer)
 
@@ -395,7 +416,7 @@ class DNSanswer(DNSmessage):
     @classmethod
     def from_recursion(cls, message):
         data = DNSanswer.__parse_answer(message)
-        print(data)
+        # print(data)
 
     @staticmethod
     def __parse_answer(message):
