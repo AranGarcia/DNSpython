@@ -8,7 +8,7 @@ import socket
 import dns
 
 HOST = ''
-PORT = 53
+INPORT = 53
 OUTPORT = 8877
 
 
@@ -21,20 +21,27 @@ class DNSserver:
         for resource in [r for r in config.keys() if r != "DEFAULT"]:
             self.resources[resource] = config[resource]["url"].split()
 
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((HOST, PORT))
+        # Listening socket
+        self.sock_in = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock_in.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock_in.bind((HOST, INPORT))
+
+        # Output socket, for recursive queries
+        self.sock_out = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock_out.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock_out.bind((HOST, OUTPORT))
 
     def start(self):
         print("Starting domain name service.")
-        print("hostname:", HOST + ',', "port", PORT)
+        print("hostname:", HOST + ',', "port", INPORT)
 
         while True:
-            data, addr = self.sock.recvfrom(1024)
+            data, addr = self.sock_in.recvfrom(1024)
             print("Query recieved from", addr)
 
             query = dns.DNSmessage(data)
-            print(query)
+            print("Query bytes")
+            print(data)
 
             if self.__name_exists(query.questions):
                 # An answer can be made from local data
@@ -45,20 +52,28 @@ class DNSserver:
                     print("\nRedirecting to default DNS server (Recursion desired):",
                           self.forward_servers[0])
 
-                    self.__redirect_query(query)
+                    self.__redirect_query(addr, query)
                 else:
                     # If an answer cannot be made with a recursive query, return a list of other DNS servers
                     print(
                         "\nReturning a list of other DNS servers (Recursion not desired).")
 
-    def __redirect_query(self, query):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.sendto(bytes(query), (self.forward_servers[0], 53))
+    def __redirect_query(self, addr, query):
+        # Redirect through output socket
+        self.sock_out.sendto(bytes(query), (self.forward_servers[0], 53))
 
-        data, address = self.sock.recvfrom(1024)
+        # Receive data and parse as a DNS response
+        data, address = self.sock_out.recvfrom(1024)
         response = dns.DNSmessage(data)
+
+
         print("\nResponse received from", address)
         print(response)
+
+        print(DNSserver.__change_id(query.id, data))
+
+        # Send response to original client
+        self.sock_in.sendto(DNSserver.__change_id(query.id, data), addr)
 
     def __name_exists(self, questions):
 
@@ -74,6 +89,9 @@ class DNSserver:
 
         return False
 
+    @staticmethod
+    def __change_id(id, data):
+        return dns.int_to_bytes(id) + data[2:]
 
 if __name__ == '__main__':
     # Configuration load

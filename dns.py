@@ -79,7 +79,7 @@ class RRecord(Resource):
         buffer = bytearray()
 
         # Name
-        buffer.extend(self.rname)
+        buffer.extend(encode_name(self.rname))
         # Type
         buffer.extend(int_to_bytes(self.rtype))
         # Class
@@ -89,7 +89,7 @@ class RRecord(Resource):
         # RDlength
         buffer.extend(int_to_bytes(len(self.rdata)))
         # RData
-        buffer.extend(self.rdata)
+        buffer.extend(encode_name(self.rdata))
 
         return bytes(buffer)
 
@@ -188,7 +188,7 @@ class DNSmessage:
             index = last
             self.add_records.append(answer)
 
-    def get_copy(self):
+    def copy(self):
         return DNSmessage(bytes(self))
 
     def __header_to_bytes(self):
@@ -200,25 +200,36 @@ class DNSmessage:
         # Flags
         mask = 0
         # QR
+
         mask |= self.flags["qr"] * 0x8000
+
         # Op. Code
         mask |= (self.flags["op_code"] << 11)
+
         # Authorative Answer
         mask |= self.flags["aa"] * 0x0400
+
         # Truncated answer
         mask |= self.flags["tc"] * 0x0200
+
         # Recursion desired
         mask |= self.flags["rd"] * 0x0100
+
         # Recursion avaialable
         mask |= self.flags["ra"] * 0x0080
+
         # Zero
         mask |= self.flags["z"] * 0x0040
+
         # Authentic data
         mask |= self.flags["ad"] * 0x0020
+
         # Cheking disables
         mask |= self.flags["cd"] * 0x0010
+
         # R. Code
         mask |= self.flags["r_code"]
+
         buffer.extend(int.to_bytes(mask, 2, byteorder="big"))
 
         return bytes(buffer)
@@ -299,18 +310,11 @@ class DNSmessage:
             return (RRecord(ans_name, ans_type, ans_class, ttl, rdata), index)
 
     @staticmethod
-    def __parse_headers(data):
-        """
-        Parses the first 4 bytes of the DNS message.
-        """
-        pass
-
-    @staticmethod
     def __parse_flags(data):
         flags = {}
         int_data = bytes_to_int(data)
         # Query 0 / Response 1
-        flags['qr'] = int_data & 0x8000
+        flags['qr'] = int_data & 0x8000 == 0x8000
         # Op. code
         flags['op_code'] = (int_data & 0x7800) >> 11
         # Autorative answer
