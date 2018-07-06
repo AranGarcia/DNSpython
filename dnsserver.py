@@ -77,6 +77,7 @@ class DNSserver:
 
         # Receive data and parse as a DNS response
         data, address = self.sock_out.recvfrom(1024)
+        print(data)
         response = dns.DNSmessage(data)
 
         print("\nResponse received from", address)

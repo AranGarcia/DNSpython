@@ -276,10 +276,12 @@ class DNSmessage:
 
     @staticmethod
     def __parse_resource(data, start):
+        index = start
         if data[start] == 192:
             chunk = bytes_to_int(data[start:start + 2])
             offset = chunk & 0x3FFF
-            ans_name, index = DNSmessage.__parse_labels(data, offset)
+            # ans_name, index = DNSmessage.__parse_labels(data, offset)
+            ans_name = DNSmessage.__get_interval(data, offset)
 
             index = start + 2
         else:
@@ -362,14 +364,32 @@ class DNSmessage:
         offset = data[index]
 
         while offset:
-            labels.append(data[index + 1:index + 1 + offset].decode())
-            index += offset + 1
+            if offset == 192:
+                chunk = bytes_to_int(data[index:index+2])
+                mask = chunk & 0x3FFF
+                seg, trash = DNSmessage.__parse_labels(data, mask)
+
+                labels.append(seg)
+
+                index += 2
+                
+            else:
+
+                labels.append(data[index + 1:index + 1 + offset].decode())
+                index += offset + 1
+                
             offset = data[index]
 
         name = '.'.join(labels)
         index += 1
 
         return name, index
+    
+    @staticmethod
+    def __get_interval(data, start):
+        size = data[start]
+
+        return data[start + 1 : start  + 1 + size]
 
     def __str__(self):
         qbuffer = bytearray()
