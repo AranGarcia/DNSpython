@@ -40,12 +40,25 @@ class DNSserver:
             print("Query recieved from", addr)
 
             query = dns.DNSmessage(data)
-            print("Query bytes")
-            print(data)
+            print(query)
 
             if self.__name_exists(query.questions):
                 # An answer can be made from local data
-                print("Name exists")
+                name = query.questions[0].qname
+
+                if not name.startswith("www."):
+                    name = "www." + name
+
+                # Add the answer and convert the query into a response
+                query.flags["qr"] = True
+                query.add_answer(name, self.resources[name][0])
+
+                print("\nSending response for", name)
+                print(query, '\n')
+
+                # Send response to client
+                self.sock_in.sendto(bytes(query), addr)
+
             else:
                 if query.flags["rd"]:
                     # Query will be forwarded to another DNS server
@@ -66,14 +79,11 @@ class DNSserver:
         data, address = self.sock_out.recvfrom(1024)
         response = dns.DNSmessage(data)
 
-
         print("\nResponse received from", address)
         print(response)
 
-        print(DNSserver.__change_id(query.id, data))
-
         # Send response to original client
-        self.sock_in.sendto(DNSserver.__change_id(query.id, data), addr)
+        self.sock_in.sendto(data, addr)
 
     def __name_exists(self, questions):
 
@@ -92,6 +102,7 @@ class DNSserver:
     @staticmethod
     def __change_id(id, data):
         return dns.int_to_bytes(id) + data[2:]
+
 
 if __name__ == '__main__':
     # Configuration load

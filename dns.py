@@ -64,9 +64,24 @@ class Resource:
 
 
 class RRecord(Resource):
+    data_lengths = {
+        1: 4,
+        26: 16
+    }
+
     def __init__(self, rname, rtype, rclass, ttl, rdata):
         super(RRecord, self).__init__(rname, rtype, rclass, rdata)
         self.ttl = ttl
+
+    @staticmethod
+    def __encode_rdata(rdata):
+        subnets = rdata.split(".")
+        buffer = bytearray()
+
+        for s in subnets:
+            buffer.append(int(s))
+        
+        return bytes(buffer)
 
     def __str__(self):
         return "name: %s, type: %s (%d), class: %s, ttl:%d, rdata: %r" % (
@@ -87,9 +102,9 @@ class RRecord(Resource):
         # TTL
         buffer.extend(int_to_bytes(self.ttl, 4))
         # RDlength
-        buffer.extend(int_to_bytes(len(self.rdata)))
+        buffer.extend(int_to_bytes(RRecord.data_lengths[self.rtype]))
         # RData
-        buffer.extend(encode_name(self.rdata))
+        buffer.extend(RRecord.__encode_rdata(self.rdata))
 
         return bytes(buffer)
 
@@ -107,7 +122,7 @@ class OPTRecord(Resource):
         else:
             domain = "<Root>"
 
-        return "domain: %s, type: %s (%d), UDP payload: %d, RCode ext.:%d, version: %d, z: 0x%04x,data: %r" % (
+        return "domain: %s, type: %s (%d), UDP payload: %d, RCode ext.:%d, version: %d, z: 0x%04x, data: %r" % (
             domain, dnscodes.RRType(self.rtype).name, self.rtype,
             self.rclass, self.ext, self.version, self.z, self.rdata
         )
@@ -158,7 +173,8 @@ class DNSmessage:
         self.query_count = bytes_to_int(data[4:6])
         self.answer_count = bytes_to_int(data[6:8])
         self.ar_count = bytes_to_int(data[8:10])
-        self.ai_count = bytes_to_int(data[10:12])
+        # self.ai_count = bytes_to_int(data[10:12])
+        self.ai_count = 0
         index = 12
 
         # Question
@@ -182,14 +198,17 @@ class DNSmessage:
             pass
 
         # Additional records
-        self.add_records = []
-        for i in range(self.ai_count):
-            answer, last = DNSmessage.__parse_resource(data, index)
-            index = last
-            self.add_records.append(answer)
+        # self.add_records = []
+        # for i in range(self.ai_count):
+        #     answer, last = DNSmessage.__parse_resource(data, index)
+        #     index = last
+        #     self.add_records.append(answer)
 
-    def copy(self):
-        return DNSmessage(bytes(self))
+    def add_answer(self, rname, rdata, rtype=1, rclass=1, ttl=25000):
+        self.answer_count += 1
+
+        print("Creating Resource:")
+        self.answers.append(RRecord(rname, rtype, rclass, ttl, rdata))
 
     def __header_to_bytes(self):
         buffer = bytearray()
@@ -363,22 +382,22 @@ class DNSmessage:
             message_type = "Query"
 
         if self.questions:
-            qbuffer.extend(b"Queries:")
+            qbuffer.extend(b"\n\tQueries:")
 
             for q in self.questions:
                 qbuffer.extend(b"\n\t\t" + str(q).encode())
 
         if self.answers:
-            abuffer.extend(b'Answers:')
+            abuffer.extend(b'\n\tAnswers:')
 
             for a in self.answers:
                 abuffer.extend(b'\n\t\t' + str(a).encode())
 
-        if self.add_records:
-            adbuffer.extend(b'Additional Records')
+        # if self.add_records:
+        #     adbuffer.extend(b'\n\tAdditional Records')
 
-            for ad in self.add_records:
-                adbuffer.extend(b"\n\t\t" + str(ad).encode())
+        #     for ad in self.add_records:
+        #         adbuffer.extend(b"\n\t\t" + str(ad).encode())
 
         return "DNS " + message_type + "\n\tTransaction ID: %d (0x%04x)\n\tHeaders:" % (self.id, self.id) + \
             "\n\t\tOp. code: %s(%d)" % (dnscodes.OP_CODE[self.flags["op_code"]], self.flags["op_code"]) + \
@@ -391,8 +410,7 @@ class DNSmessage:
                 dnscodes.R_CODE[self.flags["r_code"]], self.flags["r_code"]) + \
             "\n\tQuestions:" + str(self.query_count) + "\n\tAnswer RRs:" + str(self.answer_count) + \
             "\n\tAuthority RRs: " + str(self.ar_count) + "\n\tAditional RRs: " + str(self.ai_count) + \
-            "\n\t" + qbuffer.decode() + "\n\t" + abuffer.decode() + \
-            "\n\t" + adbuffer.decode()
+            qbuffer.decode() + abuffer.decode() + adbuffer.decode()
 
     def __bytes__(self):
         buffer = bytearray()
@@ -406,7 +424,7 @@ class DNSmessage:
         # Authority RRs
         buffer.extend(int_to_bytes(self.ar_count))
 
-        # Additional RRs
+        # # Additional RRs
         buffer.extend(int_to_bytes(self.ai_count))
 
         # Questions
@@ -417,46 +435,7 @@ class DNSmessage:
         for a in self.answers:
             buffer.extend(bytes(a))
 
-        for ad in self.add_records:
-            buffer.extend(bytes(ad))
+        # for ad in self.add_records:
+        #     buffer.extend(bytes(ad))
 
         return self.__header_to_bytes() + bytes(buffer)
-
-
-class DNSanswer(DNSmessage):
-    def __init__(self, query):
-        super(DNSanswer, self).__init__(
-            DNSanswer.__generate_trans_id, query.flags)
-        self.flags["qr"] = True
-        self.flags["aa"] = True
-        self.flags["ra"] = True
-
-    @classmethod
-    def from_local(cls, query, result):
-        pass
-
-    @classmethod
-    def from_recursion(cls, message):
-        data = DNSanswer.__parse_answer(message)
-        # print(data)
-
-    @staticmethod
-    def __parse_answer(message):
-        """
-        Returns a dictionary
-        """
-        data = {}
-
-        return data
-
-    @staticmethod
-    def __generate_trans_id():
-        return random.randint(0, 65535)
-
-    def __bytes__(self):
-        buffer = bytearray()
-        return super(DNSanswer, self).__bytes__ + bytes(buffer)
-
-    def __str__(self):
-        return "DNS Answer" + super(DNSanswer, self).__str__() + \
-            ""
